@@ -2,17 +2,17 @@
 
 > **Purpose:** Durable operating specification for the NC Math Tutor agent. This file is the authoritative reference for behavior, interfaces, safety boundaries, state management, evaluation, and delivery criteria. It is intended to be read by humans and AI coding/implementation agents.
 >
-> **Scope:** Defines required behavior for an AI-powered math tutor targeting students in 5th–6th grade, aligned to the North Carolina Department of Public Instruction (NC DPI) Mathematics Standard Course of Study. Implementation uses the OpenAI Agents SDK (Python), SQLite, and Gradio.
+> **Scope:** Defines required behavior for an AI-powered math tutor targeting students in 5th–6th grade, aligned to the North Carolina Department of Public Instruction (NC DPI) Mathematics Standard Course of Study. Implementation uses the OpenAI Agents SDK v0.22.0 (Python), SQLite 3.53.4, and Gradio 6.25.0.
 
 ---
 
 ## 0. Document Control
 
 - **System / agent name:** `math-tutor`
-- **Version:** `1.0.0`
+- **Version:** `1.1.0`
 - **Status:** `draft`
 - **Owner:** `Parent / educator deploying this repository`
-- **Last updated:** `2025-08-20`
+- **Last updated:** `2026-08-23`
 - **Primary implementation location:** `app.py` (Gradio entry point); agent logic in `agents/math_tutor.py`
 - **Related specifications:** NC DPI 5th Grade Mathematics Standard Course of Study (2018–19); NC DPI 6th Grade Mathematics Standard Course of Study (2018–19)
 - **Change policy:** Update this file whenever behavior, tools, prompts, state schema, NC standards catalog, or evaluation criteria change. Bump the version on every substantive change.
@@ -617,15 +617,15 @@ demo.launch()
 | Total session problems | 50 | `SessionState.target_problem_count` cap | Agent refuses to set target > 50 |
 | Max turns per session | 200 | Gradio history length check | Agent summarizes and suggests restarting |
 | Tool calls per turn | 3 | OpenAI Agents SDK `max_tool_calls` | Agent returns safe partial result |
-| API call timeout | 15 s | `httpx` timeout on OpenAI client | Friendly retry message to student |
+| API call timeout | 15 s | `httpx2` timeout on OpenAI client (v3.x) | Friendly retry message to student |
 | SQLite write retries | 2 | `db_tools.py` retry loop | Log error; inform student history may not be saved |
-| Context token budget | ~32k tokens (gpt-4o) | History pruning in `run_tutor_turn` | Prune oldest turns; retain state fields |
+| Context token budget | ~128k tokens (gpt-4o / gpt-4.1) | History pruning in `run_tutor_turn` | Prune oldest turns; retain state fields |
 
 ### 12.2 Failure Handling Matrix
 
 | Failure Scenario | Detection | Agent Behavior | Student-Facing Message | Logging |
 |---|---|---|---|---|
-| OpenAI API timeout | `httpx.TimeoutException` | Retry once after 3 s | "My brain is a bit slow today — give me one more second! ⏳" | `WARNING` log with session_id |
+| OpenAI API timeout | `httpx2.TimeoutException` | Retry once after 3 s | "My brain is a bit slow today — give me one more second! ⏳" | `WARNING` log with session_id |
 | Invalid standard code | Schema validation in tool | Skip generation; prompt re-selection | "Hmm, I don't recognize that standard — want to pick a topic from the list? 📋" | `WARNING` log |
 | SQLite write failure | Exception in `save_session_to_db` | Retry 2×; log on failure | "I had trouble saving your session — but great work today! Try again next time. 💾" | `ERROR` log with session data |
 | Moderation flag on generated problem | OpenAI moderation API result | Regenerate (max 2 attempts); skip if still flagged | Transparent skip; move to next problem | `WARNING` log |
@@ -694,7 +694,177 @@ The system may be deployed only when:
 
 ---
 
-## 15. Implementation and Deployment Checklist
+## 15. Phase-Based Build Plan
+
+The agent is built in **five sequential phases**. Each phase has a clear scope, deliverables, and a gate that must be passed before proceeding. This phased approach ensures a solid, testable foundation before adding complexity.
+
+### Phase 1 — Foundation and Data Layer
+
+**Goal:** Stand up the project skeleton, database, standards catalog, and basic agent wiring with no tools.
+
+**Scope:**
+- Initialize the repository with the directory structure defined in Section 3.3.
+- Create `requirements.txt` with pinned versions per Section 17.
+- Create `.env.example` and configure `.gitignore`.
+- Implement `db/database.py` with idempotent schema creation (`CREATE TABLE IF NOT EXISTS`) per Section 7.
+- Implement `standards/nc_standards.py` with the full NC DPI 5th and 6th grade standards catalog (all 49 standard codes, descriptions, and topic cluster mappings per Section 5).
+- Implement `agents/session_state.py` with the `SessionState` dataclass per Section 4.2.
+- Create the agent skeleton in `agents/math_tutor.py` — register the agent with the OpenAI Agents SDK, load the system prompt from `prompts/system_prompt.txt`, but register **no tools** yet.
+- Verify: the agent module imports successfully and the agent has a name.
+- Verify: `init_db()` creates `tutor.db` with all three tables and indexes.
+
+**Deliverables:**
+- [ ] Repository structure matches Section 3.3.
+- [ ] `requirements.txt` and `.env.example` committed.
+- [ ] SQLite schema creates cleanly on fresh install.
+- [ ] `NC_STANDARDS` dict contains all 49 standard codes and 8 topic cluster shortcuts.
+- [ ] `SessionState` dataclass instantiates with correct defaults.
+- [ ] Agent skeleton loads and has a name.
+
+**Gate:** All deliverables checked. `init_db()` runs without error. Agent skeleton is importable.
+
+---
+
+### Phase 2 — Core Tools and Problem Loop
+
+**Goal:** Implement the four core tools that drive the tutoring loop, wire them into the agent, and verify end-to-end problem generation and answer evaluation through the agent.
+
+**Scope:**
+- Implement `tools/problem_generator.py` — the `generate_problem` tool. Must validate `standard_code` against `NC_STANDARDS` before calling the model; must return a `ProblemPayload` dict with `problem_text`, `expected_answer`, `standard_code`, and `difficulty`.
+- Implement `tools/answer_evaluator.py` — the `evaluate_answer` tool. Must normalize both student and expected answers (strip whitespace, lowercase, handle fraction forms like `1/2` / `0.5` / `½`); must return an `EvaluationResult` dict with `is_correct`, `normalized_student_answer`, `normalized_expected_answer`, and `hint`.
+- Implement `tools/standards_catalog.py` — the `get_nc_standards` tool. Returns the standards catalog filtered by grade (`5`, `6`, or `all`).
+- Implement `tools/summarizer.py` — the `generate_session_summary` tool. Takes session state and returns a `SessionSummaryPayload` dict per Section 6.3.
+- Register all four tools on the agent.
+- Write `tests/test_tools.py` covering:
+  - `generate_problem` returns valid payload for at least 5 different standard codes.
+  - `evaluate_answer` correctly identifies right and wrong answers, including equivalent forms.
+  - `get_nc_standards` returns all 49 codes with grade filter `"all"`.
+  - `generate_session_summary` produces a payload matching the Section 6.3 schema.
+- Verify: The agent can be invoked via the SDK runner with a student message and calls the correct tool(s).
+
+**Deliverables:**
+- [ ] `generate_problem` validates standard codes and returns valid payloads.
+- [ ] `evaluate_answer` normalizes answers and produces correct `EvaluationResult` dicts.
+- [ ] `get_nc_standards` returns the full catalog.
+- [ ] `generate_session_summary` produces a schema-compliant summary.
+- [ ] All four tools registered on the agent.
+- [ ] `tests/test_tools.py` passes.
+
+**Gate:** All tool tests pass. The agent successfully generates a problem and evaluates an answer when prompted.
+
+---
+
+### Phase 3 — Persistence, History, and Session Management
+
+**Goal:** Implement database persistence tools, session lifecycle logic, and the Gradio interface so that a full session can be conducted end-to-end in the browser with data saved to SQLite.
+
+**Scope:**
+- Implement `tools/db_tools.py`:
+  - `save_session_to_db` — persists the session summary and problem log to `sessions` and `problem_results` tables using parameterized queries and transactions. Retry up to 2x on transient DB error.
+  - `get_student_history` — queries per-standard accuracy for a student using the Section 7 history query. Returns a `HistoryRecord` dict.
+- Register both DB tools on the agent.
+- Implement session lifecycle in `agents/math_tutor.py`:
+  - `run_tutor_turn(message, history, state)` — the main turn handler. Classifies the student message per Section 2.3, calls the appropriate tool, updates `SessionState`, and returns the response and updated state.
+  - Handle setup flow (collect name, target count, standard one at a time).
+  - Handle the problem loop (generate, evaluate, hint/reveal, count tracking).
+  - Handle early exit and skip commands.
+  - On session end: call `generate_session_summary`, then `save_session_to_db`, then display summary.
+  - Handle "show my history" and "show standards" commands.
+  - Handle "reset" / "start over" by clearing in-memory state.
+  - Handle off-topic messages with a gentle redirect.
+- Implement `app.py` — Gradio interface per Section 11:
+  - `gr.Blocks` layout with welcome banner, `gr.Chatbot`, `gr.Textbox`, Send button, and Start Over button.
+  - `gr.State(SessionState())` for per-session isolation.
+  - Wire `run_tutor_turn` into the chat handler.
+  - `demo.launch(share=False)`.
+- Write `tests/test_agent.py` covering:
+  - Session setup completes from scratch (name, count, standard).
+  - Problem loop advances correctly on correct, incorrect, and skip.
+  - Early exit triggers summary and DB save.
+  - History query returns results for a known student.
+  - Off-topic and injection messages are handled per spec.
+- Verify: A full manual session in the browser works end-to-end — setup, 3 problems answered, summary displayed, and data in SQLite.
+
+**Deliverables:**
+- [ ] `save_session_to_db` writes session and problem rows; uses parameterized queries and transactions.
+- [ ] `get_student_history` returns accurate per-standard accuracy.
+- [ ] `run_tutor_turn` handles the full message classification and tool-calling flow.
+- [ ] Gradio interface launches and supports a complete session.
+- [ ] Session summary is displayed and saved to SQLite on session end.
+- [ ] "Start Over" resets state; history is preserved in DB.
+- [ ] `tests/test_agent.py` passes.
+
+**Gate:** Full session works in the browser. Summary data is verifiable in SQLite. All agent tests pass.
+
+---
+
+### Phase 4 — Safety, Guardrails, and Edge Cases
+
+**Goal:** Harden the agent against edge cases, enforce all safety and guardrail policies from Section 9, and ensure graceful failure handling per Section 12.2.
+
+**Scope:**
+- Enforce input length cap (500 characters) in `app.py` — truncate and warn.
+- Enforce target count range (1–50) in the setup validator.
+- Add standard code allowlist check in `generate_problem` — reject invalid codes and prompt re-selection.
+- Add output schema validation (Pydantic or dataclass check) before every `save_session_to_db` call.
+- Implement child-safe content check in `generate_problem` — if problem text triggers OpenAI moderation, regenerate (max 2 attempts), then skip.
+- Handle `httpx2.TimeoutException` on OpenAI API calls — retry once after 3 seconds; show friendly message.
+- Handle SQLite write failures — retry 2x; inform student if still failing.
+- Handle empty messages — prompt for input.
+- Implement prompt injection resistance — the system prompt already instructs the model to ignore embedded instructions; add an explicit test case to verify.
+- Implement off-topic/abuse handling — redirect once, then ignore if repeated 3+ times.
+- Write `tests/eval_cases.json` with all 15 evaluation cases from Section 14.1.
+- Run through every eval case and confirm pass.
+- Spot-check 20 generated problems per standard domain for mathematical correctness and standards alignment.
+
+**Deliverables:**
+- [ ] Input length cap enforced with truncation and warning.
+- [ ] Target count validation rejects values outside 1–50.
+- [ ] Invalid standard codes are rejected cleanly.
+- [ ] Output schema validation runs before DB writes.
+- [ ] Moderation-flagged problems are regenerated or skipped.
+- [ ] API timeout and DB failure are handled gracefully with friendly messages.
+- [ ] Prompt injection attempts are ignored (agent continues tutoring).
+- [ ] Off-topic/abuse messages are redirected per policy.
+- [ ] All 15 eval cases in `tests/eval_cases.json` pass.
+- [ ] Math correctness spot-check: ≥ 95% of sampled problems are correctly aligned.
+
+**Gate:** All 15 evaluation cases pass. No child-inappropriate content in review sample. All guardrails verified through testing.
+
+---
+
+### Phase 5 — Polish, Documentation, and Release Readiness
+
+**Goal:** Finalize the system prompt, add observability logging, complete documentation, and prepare the repository for its first release.
+
+**Scope:**
+- Finalize `prompts/system_prompt.txt` — ensure all dynamic fields (`{student_name}`, `{target_problem_count}`, etc.) are documented and injected correctly at runtime.
+- Implement structured JSON-line logging per Section 13: session start, setup completion, problem generated, answer evaluated, summary generated, DB write success/failure. Log to stdout. Redact wrong answers from INFO-level logs.
+- Enable OpenAI Agents SDK tracing via `OPENAI_AGENTS_TRACE=1` in development mode.
+- Verify `requirements.txt` pins exact versions (`==`) for all dependencies.
+- Complete `README.md` per the Section 18 template: prerequisites, install steps, `.env` setup, `python app.py` launch, browser URL, reset instructions, environment variable table.
+- Add `prompt_version` tracking: log the git commit hash of `system_prompt.txt` alongside each session (prepare the `sessions` table column for v1.2 if not already added).
+- Final end-to-end manual test: fresh install, 10-problem session, verify summary, verify SQLite data, verify history query, verify "Start Over" reset.
+- Run the complete test suite: `pytest tests/` — all tests must pass.
+- Review this `agents.md` for accuracy against the implemented system; update any sections that drifted during development.
+- Tag the release: `git tag v1.1.0` after all release gates in Section 16.3 are satisfied.
+
+**Deliverables:**
+- [ ] System prompt finalized with all dynamic fields working.
+- [ ] Structured logging implemented and verified in stdout.
+- [ ] SDK tracing documented and tested in dev mode.
+- [ ] `requirements.txt` uses pinned versions.
+- [ ] `README.md` is complete and accurate.
+- [ ] Prompt version tracking is in place (or column is planned for v1.2).
+- [ ] Full end-to-end manual test passes.
+- [ ] Complete test suite (`pytest tests/`) passes.
+- [ ] `agents.md` reviewed and updated to match implementation.
+- [ ] Release tagged as `v1.1.0`.
+
+**Gate:** All release gates from Section 16.3 are satisfied. Repository is ready for first deploy.
+
+
+## 16. Implementation and Deployment Checklist
 
 - [ ] `requirements.txt` pins exact versions: `openai-agents`, `gradio`, `openai`, `pydantic`, `python-dotenv`.
 - [ ] `.env.example` provided; `.env` in `.gitignore`.
@@ -714,28 +884,28 @@ The system may be deployed only when:
 
 ---
 
-## 16. `requirements.txt` Reference
+## 17. `requirements.txt` Reference
 
 ```text
 # Core
-openai-agents>=0.1.0
-openai>=1.57.0
-gradio>=5.0.0
+openai-agents>=0.22.0
+openai>=3.3.1
+gradio>=6.25.0
 
 # Data / state
-pydantic>=2.7.0
+pydantic>=2.11.0
 python-dotenv>=1.0.0
 
 # Testing
 pytest>=8.0.0
-pytest-asyncio>=0.23.0
+pytest-asyncio>=0.26.0
 ```
 
 > **Note:** Pin to exact versions (`==`) before any production or shared deployment. Use `pip freeze > requirements.txt` after a clean install to capture the full dependency tree.
 
 ---
 
-## 17. README Quick-Start Template
+## 18. README Quick-Start Template
 
 ```markdown
 # MathBuddy — NC Math Tutor
@@ -744,7 +914,7 @@ An AI-powered math tutor for 5th–6th grade students, aligned to the
 North Carolina DPI Mathematics Standard Course of Study.
 
 ## Prerequisites
-- Python 3.10+
+- Python 3.14+
 - An OpenAI API key
 
 ## Setup
@@ -778,4 +948,4 @@ rm tutor.db    # deletes all SQLite history — cannot be undone
 
 ---
 
-*End of AGENTS.md — NC Math Tutor Agent Specification v1.0.0*
+*End of AGENTS.md — NC Math Tutor Agent Specification v1.1.0*
