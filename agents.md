@@ -17,6 +17,16 @@
 - **Related specifications:** NC DPI 5th Grade Mathematics Standard Course of Study (2018–19); NC DPI 6th Grade Mathematics Standard Course of Study (2018–19)
 - **Change policy:** Update this file whenever behavior, tools, prompts, state schema, NC standards catalog, or evaluation criteria change. Bump the version on every substantive change.
 
+### 0.1 Global Non-Negotiable Requirements
+
+These constraints apply to the entire project and override any conflicting detail elsewhere in this document:
+
+- **Fully local operation:** The project must run entirely on the local machine. No Docker or containerization is required to build, run, or use it. No user accounts, sign-ups, cloud services, or internet connection are required to use the tutor once dependencies are installed.
+  > **Note:** The current design in Section 10 (OpenAI Agents SDK, `gpt-4o` via the OpenAI API) requires an API key, an account, and an internet connection at runtime, which conflicts with this requirement. This conflict must be resolved (e.g., by using a local/offline model or an Abacus.AI-hosted option the operator already has credentials for) before this requirement can be considered met.
+- **Local data storage:** All session and progress data is stored locally on the machine in the SQLite database file (see Section 7). No data is sent to or stored in any remote database or service.
+- **Simple and conventional implementation:** Favor plain, idiomatic, well-understood Python, SQLite, and Gradio patterns over clever or novel abstractions. Avoid unnecessary layers, frameworks, or architectural complexity — the simplest implementation that satisfies this specification is preferred.
+- **Use current, working tool versions:** When installing or pinning dependencies (Python, SQLite, Gradio, and any other toolset), use the latest version of each that is confirmed to work together, rather than deliberately targeting an older release. Update the pinned versions in Section 17 as newer working versions become available.
+
 ---
 
 ## 1. Mission and Success Criteria
