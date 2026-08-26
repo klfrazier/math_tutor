@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from _sdk import Agent
@@ -13,6 +14,7 @@ SYSTEM_PROMPT_TEMPLATE = SYSTEM_PROMPT_PATH.read_text()
 math_tutor_agent = Agent(
     name="math-tutor",
     instructions=SYSTEM_PROMPT_TEMPLATE,
+    model=os.environ.get("MODEL", "gpt-4o"),
     tools=[
         generate_problem,
         evaluate_answer,
