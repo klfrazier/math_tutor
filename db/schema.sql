@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     duration_seconds  INTEGER NOT NULL DEFAULT 0,
     started_at        TEXT    NOT NULL,
     completed_at      TEXT,
+    prompt_version    TEXT,
     FOREIGN KEY (student_name) REFERENCES students(name)
 );
 

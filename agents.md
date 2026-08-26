@@ -10,9 +10,9 @@
 
 - **System / agent name:** `math-tutor`
 - **Version:** `1.1.0`
-- **Status:** `draft`
+- **Status:** `released`
 - **Owner:** `Parent / educator deploying this repository`
-- **Last updated:** `2026-08-23`
+- **Last updated:** `2026-08-26`
 - **Primary implementation location:** `app.py` (Gradio entry point); agent logic in `agents/math_tutor.py`
 - **Related specifications:** NC DPI 5th Grade Mathematics Standard Course of Study (2018–19); NC DPI 6th Grade Mathematics Standard Course of Study (2018–19)
 - **Change policy:** Update this file whenever behavior, tools, prompts, state schema, NC standards catalog, or evaluation criteria change. Bump the version on every substantive change.
@@ -138,12 +138,14 @@ For each student message, the agent follows this sequence:
 nc-math-tutor/
 ├── agents.md                  # This specification (authoritative)
 ├── README.md                  # Setup and run instructions
-├── requirements.txt           # Python dependencies
+├── getting_started.md         # Launch guide + manual test samples
+├── requirements.txt           # Python dependencies (pinned)
 ├── .env.example               # Template for OPENAI_API_KEY
+├── _sdk.py                    # Resolves the openai-agents SDK / local agents/ name collision
 ├── app.py                     # Gradio chat interface entry point
 ├── agents/
-│   ├── __init__.py
-│   ├── math_tutor.py          # Agent definition (system prompt, tools, runner)
+│   ├── __init__.py            # Loads the SDK and exposes local agents.* submodules
+│   ├── math_tutor.py          # Agent definition, session lifecycle, runner, logging
 │   └── session_state.py       # In-memory session state dataclass
 ├── tools/
 │   ├── __init__.py
@@ -151,10 +153,13 @@ nc-math-tutor/
 │   ├── answer_evaluator.py    # evaluate_answer tool
 │   ├── db_tools.py            # save_session_to_db, get_student_history tools
 │   ├── standards_catalog.py   # get_nc_standards tool
-│   └── summarizer.py          # generate_session_summary tool
+│   ├── summarizer.py          # generate_session_summary tool
+│   ├── schemas.py             # Pydantic output-schema validation
+│   ├── moderation.py          # child-safe content check
+│   └── logging_utils.py       # structured JSON-line logging
 ├── db/
 │   ├── __init__.py
-│   ├── database.py            # SQLite connection, schema creation
+│   ├── database.py            # SQLite connection, schema creation, migrations
 │   └── schema.sql             # Reference DDL
 ├── standards/
 │   └── nc_standards.py        # NC DPI 5th–6th grade standard definitions
@@ -163,6 +168,9 @@ nc-math-tutor/
 └── tests/
     ├── test_tools.py
     ├── test_agent.py
+    ├── test_eval.py
+    ├── test_spotcheck.py
+    ├── test_integration.py
     └── eval_cases.json        # Evaluation case suite
 ```
 
@@ -503,6 +511,7 @@ All tools are implemented as Python functions decorated with `@function_tool` fr
 - **Primary model:** `gpt-4o` (default); configurable via `MODEL` environment variable.
 - **Fallback model:** `gpt-4o-mini` if `gpt-4o` is unavailable or cost limit is reached.
 - **Temperature:** `0.7` for problem generation (moderate creativity); `0.2` for answer evaluation (near-deterministic).
+  > **Implementation note:** In the current build, `generate_problem` and `evaluate_answer` are deterministic local Python functions (no LLM call), so temperature does not apply to them. The live agent path (`run_agent_turn`) uses the model default temperature. If these tools are later moved to LLM calls, apply the temperatures above.
 - **Maximum output tokens:** `512` per turn (sufficient for one problem + feedback + emoji).
 - **Cost control:** No per-session hard limit enforced in v1.0; operator should set OpenAI usage limits on the API key.
 
@@ -860,37 +869,37 @@ The agent is built in **five sequential phases**. Each phase has a clear scope, 
 - Tag the release: `git tag v1.1.0` after all release gates in Section 16.3 are satisfied.
 
 **Deliverables:**
-- [ ] System prompt finalized with all dynamic fields working.
-- [ ] Structured logging implemented and verified in stdout.
-- [ ] SDK tracing documented and tested in dev mode.
-- [ ] `requirements.txt` uses pinned versions.
-- [ ] `README.md` is complete and accurate.
-- [ ] Prompt version tracking is in place (or column is planned for v1.2).
-- [ ] Full end-to-end manual test passes.
-- [ ] Complete test suite (`pytest tests/`) passes.
-- [ ] `agents.md` reviewed and updated to match implementation.
-- [ ] Release tagged as `v1.1.0`.
+- [x] System prompt finalized with all dynamic fields working.
+- [x] Structured logging implemented and verified in stdout.
+- [x] SDK tracing documented and tested in dev mode.
+- [x] `requirements.txt` uses pinned versions.
+- [x] `README.md` is complete and accurate.
+- [x] Prompt version tracking is in place (or column is planned for v1.2).
+- [x] Full end-to-end manual test passes.
+- [x] Complete test suite (`pytest tests/`) passes.
+- [x] `agents.md` reviewed and updated to match implementation.
+- [x] Release tagged as `v1.1.0`.
 
 **Gate:** All release gates from Section 16.3 are satisfied. Repository is ready for first deploy.
 
 
 ## 16. Implementation and Deployment Checklist
 
-- [ ] `requirements.txt` pins exact versions: `openai-agents`, `gradio`, `openai`, `pydantic`, `python-dotenv`.
-- [ ] `.env.example` provided; `.env` in `.gitignore`.
-- [ ] `db/database.py` creates schema idempotently on startup (`CREATE TABLE IF NOT EXISTS`).
-- [ ] All SQLite queries use parameterized statements (no f-string SQL).
-- [ ] `generate_problem` validates `standard_code` against `NC_STANDARDS` dict before calling the model.
-- [ ] `evaluate_answer` normalizes both student and expected answer (strip whitespace, lowercase, handle fraction equivalence) before comparison.
-- [ ] `save_session_to_db` uses a transaction; rolls back on any error.
-- [ ] System prompt is loaded from `prompts/system_prompt.txt` at startup, not hard-coded in Python.
-- [ ] `SessionState` is reset correctly when student clicks "Start Over" in Gradio.
-- [ ] Gradio `gr.State` is used to isolate session state per user connection.
-- [ ] Temperature is set to `0.7` for `generate_problem` and `0.2` for `evaluate_answer`.
-- [ ] OpenAI Agents SDK tracing is enabled in development (`OPENAI_AGENTS_TRACE=1`).
-- [ ] `tests/` directory contains at least: `test_tools.py`, `test_agent.py`, `eval_cases.json`.
-- [ ] `README.md` documents: prerequisites, install steps, `.env` setup, `python app.py` to launch, browser URL.
-- [ ] This `agents.md` file reflects the deployed behavior and has been reviewed before the first push.
+- [x] `requirements.txt` pins exact versions: `openai-agents`, `gradio`, `openai`, `pydantic`, `python-dotenv`.
+- [x] `.env.example` provided; `.env` in `.gitignore`.
+- [x] `db/database.py` creates schema idempotently on startup (`CREATE TABLE IF NOT EXISTS`).
+- [x] All SQLite queries use parameterized statements (no f-string SQL).
+- [x] `generate_problem` validates `standard_code` against `NC_STANDARDS` dict before calling the model.
+- [x] `evaluate_answer` normalizes both student and expected answer (strip whitespace, lowercase, handle fraction equivalence) before comparison.
+- [x] `save_session_to_db` uses a transaction; rolls back on any error.
+- [x] System prompt is loaded from `prompts/system_prompt.txt` at startup, not hard-coded in Python.
+- [x] `SessionState` is reset correctly when student clicks "Start Over" in Gradio.
+- [x] Gradio `gr.State` is used to isolate session state per user connection.
+- [ ] Temperature is set to `0.7` for `generate_problem` and `0.2` for `evaluate_answer`. *(N/A — these tools are deterministic local functions; see Section 10.1 note.)*
+- [x] OpenAI Agents SDK tracing is enabled in development (`OPENAI_AGENTS_TRACE=1`).
+- [x] `tests/` directory contains at least: `test_tools.py`, `test_agent.py`, `eval_cases.json`.
+- [x] `README.md` documents: prerequisites, install steps, `.env` setup, `python app.py` to launch, browser URL.
+- [x] This `agents.md` file reflects the deployed behavior and has been reviewed before the first push.
 
 ---
 

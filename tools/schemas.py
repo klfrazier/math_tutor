@@ -23,6 +23,7 @@ class SessionSummary(BaseModel):
     duration_seconds: int = Field(ge=0)
     encouragement_message: str
     next_step_recommendation: str
+    prompt_version: str | None = None
 
 
 class ProblemLogEntry(BaseModel):

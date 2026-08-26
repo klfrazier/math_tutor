@@ -1,12 +1,15 @@
 # Core
-openai-agents>=0.22.0
-openai>=3.3.1
-gradio>=6.25.0
+openai-agents==0.22.0
+openai==3.3.1
+gradio==6.26.0
 
 # Data / state
-pydantic>=2.11.0
-python-dotenv>=1.0.0
+pydantic==2.13.4
+python-dotenv==1.2.3
+
+# HTTP (used for API timeout handling)
+httpx==0.28.1
 
 # Testing
-pytest>=8.0.0
-pytest-asyncio>=0.26.0
+pytest==9.1.1
+pytest-asyncio==1.4.0

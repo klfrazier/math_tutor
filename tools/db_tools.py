@@ -40,11 +40,11 @@ def save_session_to_db_impl(session_summary: dict, problem_log: list[dict], db_p
                            (session_id, student_name, standard_code, standard_name,
                             target_count, problems_attempted, problems_correct,
                             problems_skipped, accuracy_pct, duration_seconds,
-                            started_at, completed_at)
+                            started_at, completed_at, prompt_version)
                            VALUES (:session_id, :student_name, :standard_code, :standard_name,
                                    :target_count, :problems_attempted, :problems_correct,
                                    :problems_skipped, :accuracy_pct, :duration_seconds,
-                                   :started_at, :completed_at)""",
+                                   :started_at, :completed_at, :prompt_version)""",
                         {
                             "session_id": session_summary["session_id"],
                             "student_name": session_summary["student_name"],
@@ -58,6 +58,7 @@ def save_session_to_db_impl(session_summary: dict, problem_log: list[dict], db_p
                             "duration_seconds": session_summary["duration_seconds"],
                             "started_at": session_summary["session_date"],
                             "completed_at": session_summary["session_date"],
+                            "prompt_version": session_summary.get("prompt_version"),
                         },
                     )
                     for p in problem_log:

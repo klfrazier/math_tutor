@@ -19,6 +19,15 @@ from tools.standards_catalog import get_nc_standards_impl
 from tools.summarizer import generate_session_summary_impl
 from tools.db_tools import save_session_to_db_impl, get_student_history_impl
 from tools.moderation import check_moderation
+from tools.logging_utils import (
+    log_session_start,
+    log_setup_complete,
+    log_problem_generated,
+    log_answer_evaluated,
+    log_summary_generated,
+    log_db_write,
+    log_error,
+)
 from standards.nc_standards import NC_STANDARDS, TOPIC_CLUSTERS
 from agents.session_state import SessionState
 
@@ -32,6 +41,8 @@ def run_agent_turn(message: str, history: list, state: SessionState) -> str:
     Returns the agent's text response. On a persistent timeout, returns a
     friendly message instead of surfacing the raw error.
     """
+    global _current_state
+    _current_state = state
     input_messages = history + [{"role": "user", "content": message}]
     try:
         result = asyncio.run(Runner.run(math_tutor_agent, input=input_messages))
@@ -47,9 +58,45 @@ def run_agent_turn(message: str, history: list, state: SessionState) -> str:
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system_prompt.txt"
 SYSTEM_PROMPT_TEMPLATE = SYSTEM_PROMPT_PATH.read_text()
 
+
+def get_prompt_version() -> str:
+    """Return the git commit hash of system_prompt.txt, or 'unknown'."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%H", "--", str(SYSTEM_PROMPT_PATH)],
+            capture_output=True, text=True, cwd=Path(__file__).parent.parent,
+        )
+        commit = result.stdout.strip()
+        return commit or "unknown"
+    except Exception:
+        return "unknown"
+
+# Holds the current session state so the system prompt's dynamic fields
+# ({student_name}, {target_problem_count}, ...) can be injected at runtime.
+_current_state: SessionState = SessionState()
+
+
+def format_system_prompt(state: SessionState | None = None) -> str:
+    """Render the system prompt template with the current session state."""
+    s = state or _current_state
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        student_name=s.student_name or "friend",
+        target_problem_count=s.target_problem_count or 0,
+        standard_code=s.selected_standard_code or "not selected yet",
+        standard_name=s.selected_standard_name or "not selected yet",
+        problems_attempted=s.problems_attempted,
+        problems_correct=s.problems_correct,
+    )
+
+
+def _instructions_fn(ctx, agent):
+    return format_system_prompt(_current_state)
+
+
 math_tutor_agent = Agent(
     name="math-tutor",
-    instructions=SYSTEM_PROMPT_TEMPLATE,
+    instructions=_instructions_fn,
     model=os.environ.get("MODEL", "gpt-4o"),
     tools=[
         generate_problem,
@@ -184,6 +231,11 @@ def _start_problem(state: SessionState) -> tuple[str, SessionState]:
             state.current_problem = payload["problem_text"]
             state.current_expected_answer = payload["expected_answer"]
             state.current_attempt = 0
+            log_problem_generated(state.session_id, {
+                "standard_code": state.selected_standard_code,
+                "difficulty": payload["difficulty"],
+                "problem_number": state.problems_attempted + 1,
+            })
             return (
                 f"Here's your problem #{state.problems_attempted + 1}:\n\n"
                 f"**{payload['problem_text']}**\n\nTake your time! 😊",
@@ -195,6 +247,11 @@ def _start_problem(state: SessionState) -> tuple[str, SessionState]:
 def _handle_answer(message: str, state: SessionState) -> tuple[str, SessionState]:
     result = evaluate_answer_impl(message, state.current_expected_answer, state.current_problem)
     state.current_attempt += 1
+    log_answer_evaluated(
+        state.session_id,
+        {"is_correct": result["is_correct"], "attempt": state.current_attempt},
+        wrong_answer=message if not result["is_correct"] else "",
+    )
     if result["is_correct"]:
         state.problems_correct += 1
         state.problems_attempted += 1
@@ -258,12 +315,22 @@ def _format_summary(summary: dict) -> str:
 
 def _end_session(state: SessionState, prefix: str = "") -> tuple[str, SessionState]:
     summary = generate_session_summary_impl(_state_to_dict(state))
+    summary["prompt_version"] = get_prompt_version()
+    log_summary_generated(state.session_id, {
+        "problems_attempted": summary["problems_attempted"],
+        "problems_correct": summary["problems_correct"],
+        "problems_skipped": summary["problems_skipped"],
+        "accuracy_pct": summary["accuracy_pct"],
+        "prompt_version": summary["prompt_version"],
+    })
     save_result = save_session_to_db_impl(summary, state.problem_log)
+    log_db_write(state.session_id, save_result.get("success", False), save_result.get("error", ""))
     state.session_complete = True
     body = _format_summary(summary)
     if prefix:
         body = prefix + "\n\n" + body
     if not save_result.get("success"):
+        log_error(state.session_id, "session could not be saved to history", {"error": save_result.get("error", "")})
         return (
             body
             + "\n\n*(I had trouble saving your session to history — but great work today!)*",
@@ -300,6 +367,7 @@ def _handle_setup(message: str, state: SessionState) -> tuple[str, SessionState]
     if not state.student_name:
         name = message.strip()[:50]
         state.student_name = name
+        log_session_start(state.session_id, name)
         return (
             f"Nice to meet you, {name}! How many problems would you like to do today? (1 to 50)",
             state,
@@ -325,6 +393,12 @@ def _handle_setup(message: str, state: SessionState) -> tuple[str, SessionState]
             )
         state.selected_standard_code = code
         state.selected_standard_name = name
+        log_setup_complete(state.session_id, {
+            "student_name": state.student_name,
+            "target_problem_count": state.target_problem_count,
+            "standard_code": code,
+            "standard_name": name,
+        })
         return _start_problem(state)
     return _start_problem(state)
 
