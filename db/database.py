@@ -2,12 +2,11 @@ import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = os.environ.get("DB_PATH", "tutor.db")
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
 def get_connection(db_path: str | None = None) -> sqlite3.Connection:
-    path = db_path or DB_PATH
+    path = db_path or os.environ.get("DB_PATH", "tutor.db")
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

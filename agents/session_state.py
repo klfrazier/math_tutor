@@ -20,3 +20,4 @@ class SessionState:
         default_factory=lambda: datetime.now(timezone.utc)
     )
     problem_log: list[dict] = field(default_factory=list)
+    session_complete: bool = False
