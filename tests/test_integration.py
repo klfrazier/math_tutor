@@ -31,7 +31,7 @@ def _run_full_session():
 
     def turn(msg):
         nonlocal state, history
-        history, state = app.chat_fn(msg, history, state)
+        history, state, _cleared = app.chat_fn(msg, history, state)
         return history[-1]["content"]
 
     # Setup
@@ -91,12 +91,12 @@ class TestFullSession:
     def test_start_over_reset(self, fresh_db):
         state = SessionState()
         history = []
-        history, state = app.chat_fn("Sam", history, state)
-        history, state = app.chat_fn("3", history, state)
-        history, state = app.chat_fn("Fractions", history, state)
+        history, state, _ = app.chat_fn("Sam", history, state)
+        history, state, _ = app.chat_fn("3", history, state)
+        history, state, _ = app.chat_fn("Fractions", history, state)
         assert state.current_problem
         # Start Over resets to a fresh session
-        history, state = app.chat_fn("start over", history, state)
+        history, state, _ = app.chat_fn("start over", history, state)
         assert state.student_name == ""
         assert state.target_problem_count == 0
         assert state.current_problem == ""
@@ -106,6 +106,7 @@ class TestFullSession:
         state = SessionState()
         history = []
         long_msg = "x" * 600
-        history, state = app.chat_fn(long_msg, history, state)
+        history, state, cleared = app.chat_fn(long_msg, history, state)
         assert len(history[0]["content"]) == 500
         assert "500 characters" in history[1]["content"]
+        assert cleared == ""  # input box is cleared after submission

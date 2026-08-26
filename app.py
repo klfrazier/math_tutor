@@ -23,7 +23,8 @@ def chat_fn(message: str, history: list, state: SessionState):
         {"role": "user", "content": message},
         {"role": "assistant", "content": response},
     ]
-    return history, updated_state
+    # Return an empty string as the third output to clear the input box.
+    return history, updated_state, ""
 
 
 def start_over():
@@ -43,8 +44,8 @@ with gr.Blocks(title="MathBuddy — NC Math Tutor") as demo:
         submit_btn = gr.Button("Send ➤", variant="primary")
         clear_btn = gr.Button("Start Over 🔄")
 
-    submit_btn.click(chat_fn, [msg, chatbot, state], [chatbot, state])
-    msg.submit(chat_fn, [msg, chatbot, state], [chatbot, state])
+    submit_btn.click(chat_fn, [msg, chatbot, state], [chatbot, state, msg])
+    msg.submit(chat_fn, [msg, chatbot, state], [chatbot, state, msg])
     clear_btn.click(start_over, None, [chatbot, msg, state])
 
 

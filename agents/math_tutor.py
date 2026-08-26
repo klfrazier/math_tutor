@@ -363,9 +363,31 @@ def _format_history(record: dict) -> str:
     return "\n".join(lines)
 
 
+def _parse_name(message: str) -> str:
+    """Extract a clean first name from a setup message.
+
+    Strips common lead-ins like "my name is", "i'm", "i am", "call me",
+    and trailing punctuation, then returns the first word (capped at 50
+    chars). Falls back to the raw trimmed message if nothing matches.
+    """
+    import re
+    text = message.strip()
+    lowered = text.lower()
+    for lead in ("my name is", "i am", "i'm", "call me", "my name's", "name is"):
+        if lowered.startswith(lead):
+            text = text[len(lead):].strip()
+            break
+    text = text.strip(" .,!?;:'\"")
+    if not text:
+        return message.strip()[:50]
+    # Take the first token as the first name.
+    first = re.split(r"[\s,]+", text)[0]
+    return first[:50]
+
+
 def _handle_setup(message: str, state: SessionState) -> tuple[str, SessionState]:
     if not state.student_name:
-        name = message.strip()[:50]
+        name = _parse_name(message)
         state.student_name = name
         log_session_start(state.session_id, name)
         return (
