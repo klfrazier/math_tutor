@@ -4,9 +4,21 @@ from agents.math_tutor import run_tutor_turn
 from agents.session_state import SessionState
 from db.database import init_db
 
+MAX_MESSAGE_LENGTH = 500
+
 
 def chat_fn(message: str, history: list, state: SessionState):
+    message = message or ""
+    truncated = False
+    if len(message) > MAX_MESSAGE_LENGTH:
+        message = message[:MAX_MESSAGE_LENGTH]
+        truncated = True
     response, updated_state = run_tutor_turn(message, history, state)
+    if truncated:
+        response = (
+            "*(Your message was longer than 500 characters, so I only read the "
+            "first part.)*\n\n" + response
+        )
     history = history + [
         {"role": "user", "content": message},
         {"role": "assistant", "content": response},

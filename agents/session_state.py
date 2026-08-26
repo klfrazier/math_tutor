@@ -21,3 +21,4 @@ class SessionState:
     )
     problem_log: list[dict] = field(default_factory=list)
     session_complete: bool = False
+    offtopic_count: int = 0

@@ -9,12 +9,22 @@ import time
 
 from _sdk import function_tool
 from db.database import get_connection
+from tools.schemas import validate_session_summary, validate_problem_log, ValidationError
 
 _MAX_RETRIES = 2  # initial attempt + 2 retries on transient DB error
 
 
 def save_session_to_db_impl(session_summary: dict, problem_log: list[dict], db_path: str | None = None) -> dict:
     """Persist a session summary and its problem log to SQLite."""
+    try:
+        session_summary = validate_session_summary(session_summary)
+        problem_log = validate_problem_log(problem_log)
+    except ValidationError as e:
+        return {
+            "success": False,
+            "session_id": session_summary.get("session_id", ""),
+            "error": f"schema_validation_failed: {e}",
+        }
     last_error = None
     for attempt in range(_MAX_RETRIES + 1):
         try:

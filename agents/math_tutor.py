@@ -1,8 +1,12 @@
+import asyncio
 import os
 import random
+import time
 from pathlib import Path
 
-from _sdk import Agent
+import httpx
+
+from _sdk import Agent, Runner
 
 from tools.problem_generator import generate_problem
 from tools.answer_evaluator import evaluate_answer
@@ -14,8 +18,31 @@ from tools.answer_evaluator import evaluate_answer_impl
 from tools.standards_catalog import get_nc_standards_impl
 from tools.summarizer import generate_session_summary_impl
 from tools.db_tools import save_session_to_db_impl, get_student_history_impl
+from tools.moderation import check_moderation
 from standards.nc_standards import NC_STANDARDS, TOPIC_CLUSTERS
 from agents.session_state import SessionState
+
+MAX_MODERATION_ATTEMPTS = 2
+API_TIMEOUT_RETRY_DELAY = 3.0
+
+
+def run_agent_turn(message: str, history: list, state: SessionState) -> str:
+    """Run a live agent turn via the SDK Runner, retrying once on API timeout.
+
+    Returns the agent's text response. On a persistent timeout, returns a
+    friendly message instead of surfacing the raw error.
+    """
+    input_messages = history + [{"role": "user", "content": message}]
+    try:
+        result = asyncio.run(Runner.run(math_tutor_agent, input=input_messages))
+        return result.final_output
+    except httpx.TimeoutException:
+        time.sleep(API_TIMEOUT_RETRY_DELAY)
+        try:
+            result = asyncio.run(Runner.run(math_tutor_agent, input=input_messages))
+            return result.final_output
+        except httpx.TimeoutException:
+            return "Oops, my math brain glitched! Give me a moment and try again. 😊"
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system_prompt.txt"
 SYSTEM_PROMPT_TEMPLATE = SYSTEM_PROMPT_PATH.read_text()
@@ -35,9 +62,10 @@ math_tutor_agent = Agent(
 )
 
 _INJECTION_MARKERS = [
-    "ignore your", "ignore all previous", "system prompt", "you are now",
-    "act as", "disregard", "override your", "forget your instructions",
-    "new instructions", "pretend you are", "you are a different",
+    "ignore your", "ignore all previous", "ignore previous", "ignore all",
+    "system prompt", "you are now", "act as", "disregard", "override your",
+    "forget your instructions", "new instructions", "pretend you are",
+    "you are a different",
 ]
 _OFFTOPIC_MARKERS = [
     "capital of", "who is", "what is the meaning of life", "weather",
@@ -54,6 +82,14 @@ def _is_injection(message: str) -> bool:
 def _is_offtopic(message: str) -> bool:
     m = message.lower()
     return any(marker in m for marker in _OFFTOPIC_MARKERS)
+
+
+def _handle_offtopic(state: SessionState) -> tuple[str, SessionState]:
+    """Redirect off-topic/abuse messages once, then ignore after 3+ repeats."""
+    state.offtopic_count += 1
+    if state.offtopic_count > 3:
+        return "Let's get back to the math! 🔢", state
+    return "I'm just a math tutor — let's get back to the numbers! 🔢", state
 
 
 def _classify_command(message: str) -> str | None:
@@ -119,7 +155,7 @@ def _record_problem(state: SessionState, student_answer: str, correct: bool, ski
         "expected_answer": state.current_expected_answer,
         "student_answer": student_answer,
         "correct": correct,
-        "attempts": state.current_attempt,
+        "attempts": max(1, state.current_attempt),
         "skipped": skipped,
         "time_taken_seconds": None,
     })
@@ -140,17 +176,20 @@ def _state_to_dict(state: SessionState) -> dict:
 
 
 def _start_problem(state: SessionState) -> tuple[str, SessionState]:
-    payload = generate_problem_impl(state.selected_standard_code, difficulty=_current_difficulty(state))
-    if "error" in payload:
-        return "Oops, my math brain glitched! Let me try a different topic.", state
-    state.current_problem = payload["problem_text"]
-    state.current_expected_answer = payload["expected_answer"]
-    state.current_attempt = 0
-    return (
-        f"Here's your problem #{state.problems_attempted + 1}:\n\n"
-        f"**{payload['problem_text']}**\n\nTake your time! 😊",
-        state,
-    )
+    for _ in range(MAX_MODERATION_ATTEMPTS + 1):
+        payload = generate_problem_impl(state.selected_standard_code, difficulty=_current_difficulty(state))
+        if "error" in payload:
+            return "Oops, my math brain glitched! Let me try a different topic.", state
+        if not check_moderation(payload["problem_text"]):
+            state.current_problem = payload["problem_text"]
+            state.current_expected_answer = payload["expected_answer"]
+            state.current_attempt = 0
+            return (
+                f"Here's your problem #{state.problems_attempted + 1}:\n\n"
+                f"**{payload['problem_text']}**\n\nTake your time! 😊",
+                state,
+            )
+    return "Hmm, I couldn't find a good problem for that topic just now. Let's try a different one!", state
 
 
 def _handle_answer(message: str, state: SessionState) -> tuple[str, SessionState]:
@@ -326,14 +365,14 @@ def run_tutor_turn(message: str, history: list, state: SessionState) -> tuple[st
 
     if not _setup_complete(state):
         if _is_offtopic(message):
-            return "I'm just a math tutor — let's get back to the numbers! 🔢", state
+            return _handle_offtopic(state)
         return _handle_setup(message, state)
 
     if state.current_problem:
         if cmd == "skip":
             return _handle_skip(state)
         if _is_offtopic(message):
-            return "I'm just a math tutor — let's get back to the numbers! 🔢", state
+            return _handle_offtopic(state)
         return _handle_answer(message, state)
 
     return _start_problem(state)
