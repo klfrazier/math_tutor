@@ -5,7 +5,11 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(grep *)",
-      "Bash(find *)"
+      "Bash(find *)",
+      "Bash(sed *)",
+      "Bash(ls *)",
+      "Bash(pip install *)",
+      "Bash(python3 *)"
     ]
   }
 }
